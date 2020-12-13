@@ -31,8 +31,8 @@ const useStyles = makeStyles((theme: Theme) =>
 
 interface Props {
   logs: Array<any>;
-  selectedReqLogId?: string;
-  onLogClick(requestId: string): void;
+  selectedReqLogId?: number;
+  onLogClick(requestId: number): void;
   theme: Theme;
 }
 
@@ -63,8 +63,8 @@ function RequestList({
 
 interface RequestListTableProps {
   logs?: any;
-  selectedReqLogId?: string;
-  onLogClick(requestId: string): void;
+  selectedReqLogId?: number;
+  onLogClick(requestId: number): void;
   theme: Theme;
 }
 
@@ -128,7 +128,9 @@ function RequestListTable({
                   {response && (
                     <div>
                       <HttpStatusIcon status={response.statusCode} />{" "}
-                      <code>{response.status}</code>
+                      <code>
+                        {response.statusCode} {response.statusReason}
+                      </code>
                     </div>
                   )}
                 </TableCell>

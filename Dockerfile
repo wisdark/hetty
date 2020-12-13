@@ -1,14 +1,16 @@
 ARG GO_VERSION=1.15
-ARG CGO_ENABLED=0
+ARG CGO_ENABLED=1
 ARG NODE_VERSION=14.11
 
 FROM golang:${GO_VERSION}-alpine AS go-builder
 WORKDIR /app
+RUN apk add --no-cache build-base
 COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd ./cmd
 COPY pkg ./pkg
-RUN go build -o hetty ./cmd/hetty
+RUN rm -f cmd/hetty/rice-box.go
+RUN go build ./cmd/hetty
 
 FROM node:${NODE_VERSION}-alpine AS node-builder
 WORKDIR /app
@@ -25,4 +27,4 @@ COPY --from=node-builder /app/dist admin
 
 ENTRYPOINT ["./hetty", "-adminPath=./admin"]
 
-EXPOSE 80
+EXPOSE 8080

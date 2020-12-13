@@ -11,14 +11,23 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/dstotijn/hetty/pkg/proj"
 	"github.com/dstotijn/hetty/pkg/proxy"
-	"github.com/google/uuid"
+	"github.com/dstotijn/hetty/pkg/scope"
 )
 
-var ErrRequestNotFound = errors.New("reqlog: request not found")
+type contextKey int
+
+const LogBypassedKey contextKey = 0
+
+const moduleName = "reqlog"
+
+var (
+	ErrRequestNotFound = errors.New("reqlog: request not found")
+)
 
 type Request struct {
-	ID        uuid.UUID
+	ID        int64
 	Request   http.Request
 	Body      []byte
 	Timestamp time.Time
@@ -26,64 +35,108 @@ type Request struct {
 }
 
 type Response struct {
-	RequestID uuid.UUID
+	ID        int64
+	RequestID int64
 	Response  http.Response
 	Body      []byte
 	Timestamp time.Time
 }
 
 type Service struct {
-	repo Repository
+	BypassOutOfScopeRequests bool
+	FindReqsFilter           FindRequestsFilter
+
+	scope *scope.Scope
+	repo  Repository
 }
 
-func NewService(repo Repository) *Service {
-	return &Service{repo}
+type FindRequestsFilter struct {
+	OnlyInScope bool
 }
 
-func (svc *Service) FindAllRequests(ctx context.Context) ([]Request, error) {
-	return svc.repo.FindAllRequestLogs(ctx)
+type Config struct {
+	Scope                    *scope.Scope
+	Repository               Repository
+	ProjectService           *proj.Service
+	BypassOutOfScopeRequests bool
 }
 
-func (svc *Service) FindRequestLogByID(ctx context.Context, id uuid.UUID) (Request, error) {
+func NewService(cfg Config) *Service {
+	svc := &Service{
+		scope:                    cfg.Scope,
+		repo:                     cfg.Repository,
+		BypassOutOfScopeRequests: cfg.BypassOutOfScopeRequests,
+	}
+
+	cfg.ProjectService.OnProjectOpen(func(_ string) error {
+		err := svc.loadSettings()
+		if err == proj.ErrNoSettings {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("reqlog: could not load settings: %v", err)
+		}
+		return nil
+	})
+	cfg.ProjectService.OnProjectClose(func(_ string) error {
+		svc.unloadSettings()
+		return nil
+	})
+
+	return svc
+}
+
+func (svc *Service) FindRequests(ctx context.Context) ([]Request, error) {
+	return svc.repo.FindRequestLogs(ctx, svc.FindReqsFilter, svc.scope)
+}
+
+func (svc *Service) FindRequestLogByID(ctx context.Context, id int64) (Request, error) {
 	return svc.repo.FindRequestLogByID(ctx, id)
 }
 
-func (svc *Service) addRequest(ctx context.Context, reqID uuid.UUID, req http.Request, body []byte) error {
-	reqLog := Request{
-		ID:        reqID,
-		Request:   req,
-		Body:      body,
-		Timestamp: time.Now(),
-	}
-
-	return svc.repo.AddRequestLog(ctx, reqLog)
+func (svc *Service) SetRequestLogFilter(ctx context.Context, filter FindRequestsFilter) error {
+	svc.FindReqsFilter = filter
+	return svc.repo.UpsertSettings(ctx, "reqlog", svc)
 }
 
-func (svc *Service) addResponse(ctx context.Context, reqID uuid.UUID, res http.Response, body []byte) error {
+func (svc *Service) ClearRequests(ctx context.Context) error {
+	return svc.repo.ClearRequestLogs(ctx)
+}
+
+func (svc *Service) addRequest(
+	ctx context.Context,
+	req http.Request,
+	body []byte,
+	timestamp time.Time,
+) (*Request, error) {
+	return svc.repo.AddRequestLog(ctx, req, body, timestamp)
+}
+
+func (svc *Service) addResponse(
+	ctx context.Context,
+	reqID int64,
+	res http.Response,
+	body []byte,
+	timestamp time.Time,
+) (*Response, error) {
 	if res.Header.Get("Content-Encoding") == "gzip" {
 		gzipReader, err := gzip.NewReader(bytes.NewBuffer(body))
 		if err != nil {
-			return fmt.Errorf("reqlog: could not create gzip reader: %v", err)
+			return nil, fmt.Errorf("reqlog: could not create gzip reader: %v", err)
 		}
 		defer gzipReader.Close()
 		body, err = ioutil.ReadAll(gzipReader)
 		if err != nil {
-			return fmt.Errorf("reqlog: could not read gzipped response body: %v", err)
+			return nil, fmt.Errorf("reqlog: could not read gzipped response body: %v", err)
 		}
 	}
 
-	resLog := Response{
-		RequestID: reqID,
-		Response:  res,
-		Body:      body,
-		Timestamp: time.Now(),
-	}
-
-	return svc.repo.AddResponseLog(ctx, resLog)
+	return svc.repo.AddResponseLog(ctx, reqID, res, body, timestamp)
 }
 
 func (svc *Service) RequestModifier(next proxy.RequestModifyFunc) proxy.RequestModifyFunc {
 	return func(req *http.Request) {
+		now := time.Now()
 		next(req)
 
 		clone := req.Clone(req.Context())
@@ -99,28 +152,42 @@ func (svc *Service) RequestModifier(next proxy.RequestModifyFunc) proxy.RequestM
 			req.Body = ioutil.NopCloser(bytes.NewBuffer(body))
 		}
 
-		reqID, _ := req.Context().Value(proxy.ReqIDKey).(uuid.UUID)
-		if reqID == uuid.Nil {
-			log.Println("[ERROR] Request is missing a related request ID")
+		// Bypass logging if this setting is enabled and the incoming request
+		// doens't match any rules of the scope.
+		if svc.BypassOutOfScopeRequests && !svc.scope.Match(clone, body) {
+			ctx := context.WithValue(req.Context(), LogBypassedKey, true)
+			*req = *req.WithContext(ctx)
 			return
 		}
 
-		go func() {
-			if err := svc.addRequest(context.Background(), reqID, *clone, body); err != nil {
-				log.Printf("[ERROR] Could not store request log: %v", err)
-			}
-		}()
+		reqLog, err := svc.addRequest(req.Context(), *clone, body, now)
+		if err == proj.ErrNoProject {
+			ctx := context.WithValue(req.Context(), LogBypassedKey, true)
+			*req = *req.WithContext(ctx)
+			return
+		}
+		if err != nil {
+			log.Printf("[ERROR] Could not store request log: %v", err)
+			return
+		}
+		ctx := context.WithValue(req.Context(), proxy.ReqIDKey, reqLog.ID)
+		*req = *req.WithContext(ctx)
 	}
 }
 
 func (svc *Service) ResponseModifier(next proxy.ResponseModifyFunc) proxy.ResponseModifyFunc {
 	return func(res *http.Response) error {
+		now := time.Now()
 		if err := next(res); err != nil {
 			return err
 		}
 
-		reqID, _ := res.Request.Context().Value(proxy.ReqIDKey).(uuid.UUID)
-		if reqID == uuid.Nil {
+		if bypassed, _ := res.Request.Context().Value(LogBypassedKey).(bool); bypassed {
+			return nil
+		}
+
+		reqID, _ := res.Request.Context().Value(proxy.ReqIDKey).(int64)
+		if reqID == 0 {
 			return errors.New("reqlog: request is missing ID")
 		}
 
@@ -134,11 +201,20 @@ func (svc *Service) ResponseModifier(next proxy.ResponseModifyFunc) proxy.Respon
 		res.Body = ioutil.NopCloser(bytes.NewBuffer(body))
 
 		go func() {
-			if err := svc.addResponse(res.Request.Context(), reqID, clone, body); err != nil {
+			if _, err := svc.addResponse(context.Background(), reqID, clone, body, now); err != nil {
 				log.Printf("[ERROR] Could not store response log: %v", err)
 			}
 		}()
 
 		return nil
 	}
+}
+
+func (svc *Service) loadSettings() error {
+	return svc.repo.FindSettingsByModule(context.Background(), moduleName, svc)
+}
+
+func (svc *Service) unloadSettings() {
+	svc.BypassOutOfScopeRequests = false
+	svc.FindReqsFilter = FindRequestsFilter{}
 }

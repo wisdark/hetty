@@ -21,15 +21,20 @@ import MenuIcon from "@material-ui/icons/Menu";
 import HomeIcon from "@material-ui/icons/Home";
 import SettingsEthernetIcon from "@material-ui/icons/SettingsEthernet";
 import SendIcon from "@material-ui/icons/Send";
+import FolderIcon from "@material-ui/icons/Folder";
+import LocationSearchingIcon from "@material-ui/icons/LocationSearching";
 import ChevronLeftIcon from "@material-ui/icons/ChevronLeft";
 import ChevronRightIcon from "@material-ui/icons/ChevronRight";
 import clsx from "clsx";
 
 export enum Page {
   Home,
+  GetStarted,
+  Projects,
   ProxySetup,
   ProxyLogs,
   Sender,
+  Scope,
 }
 
 const drawerWidth = 240;
@@ -154,7 +159,7 @@ export function Layout({ title, page, children }: Props): JSX.Element {
             <MenuIcon />
           </IconButton>
           <Typography variant="h5" noWrap>
-            <span className={title !== "" && classes.titleHighlight}>
+            <span className={title !== "" ? classes.titleHighlight : ""}>
               Hetty://
             </span>
             {title}
@@ -231,6 +236,38 @@ export function Layout({ title, page, children }: Props): JSX.Element {
                 </ListItemIcon>
               </Tooltip>
               <ListItemText primary="Sender" />
+            </ListItem>
+          </Link>
+          <Link href="/scope" passHref>
+            <ListItem
+              button
+              component="a"
+              key="scope"
+              selected={page === Page.Scope}
+              className={classes.listItem}
+            >
+              <Tooltip title="Scope">
+                <ListItemIcon className={classes.listItemIcon}>
+                  <LocationSearchingIcon />
+                </ListItemIcon>
+              </Tooltip>
+              <ListItemText primary="Scope" />
+            </ListItem>
+          </Link>
+          <Link href="/projects" passHref>
+            <ListItem
+              button
+              component="a"
+              key="projects"
+              selected={page === Page.Projects}
+              className={classes.listItem}
+            >
+              <Tooltip title="Projects">
+                <ListItemIcon className={classes.listItemIcon}>
+                  <FolderIcon />
+                </ListItemIcon>
+              </Tooltip>
+              <ListItemText primary="Projects" />
             </ListItem>
           </Link>
         </List>

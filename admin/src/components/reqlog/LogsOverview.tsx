@@ -1,38 +1,26 @@
 import { useRouter } from "next/router";
-import { gql, useQuery } from "@apollo/client";
-import { useState } from "react";
-import { Box, Typography, CircularProgress } from "@material-ui/core";
+import Link from "next/link";
+import {
+  Box,
+  CircularProgress,
+  Link as MaterialLink,
+  Typography,
+} from "@material-ui/core";
 import Alert from "@material-ui/lab/Alert";
 
 import RequestList from "./RequestList";
 import LogDetail from "./LogDetail";
 import CenteredPaper from "../CenteredPaper";
-
-const HTTP_REQUEST_LOGS = gql`
-  query HttpRequestLogs {
-    httpRequestLogs {
-      id
-      method
-      url
-      timestamp
-      response {
-        status
-        statusCode
-      }
-    }
-  }
-`;
+import { useHttpRequestLogs } from "./hooks/useHttpRequestLogs";
 
 function LogsOverview(): JSX.Element {
   const router = useRouter();
-  const detailReqLogId = router.query.id as string;
-  console.log(detailReqLogId);
+  const detailReqLogId =
+    router.query.id && parseInt(router.query.id as string, 10);
 
-  const { loading, error, data } = useQuery(HTTP_REQUEST_LOGS, {
-    pollInterval: 1000,
-  });
+  const { loading, error, data } = useHttpRequestLogs();
 
-  const handleLogClick = (reqId: string) => {
+  const handleLogClick = (reqId: number) => {
     router.push("/proxy/logs?id=" + reqId, undefined, {
       shallow: false,
     });
@@ -42,6 +30,17 @@ function LogsOverview(): JSX.Element {
     return <CircularProgress />;
   }
   if (error) {
+    if (error.graphQLErrors[0]?.extensions?.code === "no_active_project") {
+      return (
+        <Alert severity="info">
+          There is no project active.{" "}
+          <Link href="/projects" passHref>
+            <MaterialLink color="secondary">Create or open</MaterialLink>
+          </Link>{" "}
+          one first.
+        </Alert>
+      );
+    }
     return <Alert severity="error">Error fetching logs: {error.message}</Alert>;
   }
 

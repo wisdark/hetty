@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/tls"
-	"crypto/x509"
 	"flag"
 	"log"
 	"net"
@@ -12,50 +11,75 @@ import (
 
 	rice "github.com/GeertJohan/go.rice"
 	"github.com/dstotijn/hetty/pkg/api"
-	"github.com/dstotijn/hetty/pkg/db/cayley"
+	"github.com/dstotijn/hetty/pkg/db/sqlite"
+	"github.com/dstotijn/hetty/pkg/proj"
 	"github.com/dstotijn/hetty/pkg/proxy"
 	"github.com/dstotijn/hetty/pkg/reqlog"
+	"github.com/dstotijn/hetty/pkg/scope"
 
 	"github.com/99designs/gqlgen/graphql/handler"
 	"github.com/99designs/gqlgen/graphql/playground"
 	"github.com/gorilla/mux"
+	"github.com/mitchellh/go-homedir"
 )
 
 var (
 	caCertFile string
 	caKeyFile  string
-	dbFile     string
+	projPath   string
 	addr       string
 	adminPath  string
 )
 
 func main() {
-	flag.StringVar(&caCertFile, "cert", "", "CA certificate file path")
-	flag.StringVar(&caKeyFile, "key", "", "CA private key file path")
-	flag.StringVar(&dbFile, "db", "hetty.db", "Database file path")
-	flag.StringVar(&addr, "addr", ":80", "TCP address to listen on, in the form \"host:port\"")
+	flag.StringVar(&caCertFile, "cert", "~/.hetty/hetty_cert.pem", "CA certificate filepath. Creates a new CA certificate is file doesn't exist")
+	flag.StringVar(&caKeyFile, "key", "~/.hetty/hetty_key.pem", "CA private key filepath. Creates a new CA private key if file doesn't exist")
+	flag.StringVar(&projPath, "projects", "~/.hetty/projects", "Projects directory path")
+	flag.StringVar(&addr, "addr", ":8080", "TCP address to listen on, in the form \"host:port\"")
 	flag.StringVar(&adminPath, "adminPath", "", "File path to admin build")
 	flag.Parse()
 
-	tlsCA, err := tls.LoadX509KeyPair(caCertFile, caKeyFile)
+	// Expand `~` in filepaths.
+	caCertFile, err := homedir.Expand(caCertFile)
 	if err != nil {
-		log.Fatalf("[FATAL] Could not load CA key pair: %v", err)
+		log.Fatalf("[FATAL] Could not parse CA certificate filepath: %v", err)
+	}
+	caKeyFile, err := homedir.Expand(caKeyFile)
+	if err != nil {
+		log.Fatalf("[FATAL] Could not parse CA private key filepath: %v", err)
+	}
+	projPath, err := homedir.Expand(projPath)
+	if err != nil {
+		log.Fatalf("[FATAL] Could not parse projects filepath: %v", err)
 	}
 
-	caCert, err := x509.ParseCertificate(tlsCA.Certificate[0])
+	// Load existing CA certificate and key from disk, or generate and write
+	// to disk if no files exist yet.
+	caCert, caKey, err := proxy.LoadOrCreateCA(caKeyFile, caCertFile)
 	if err != nil {
-		log.Fatalf("[FATAL] Could not parse CA: %v", err)
+		log.Fatalf("[FATAL] Could not create/load CA key pair: %v", err)
 	}
 
-	db, err := cayley.NewDatabase(dbFile)
+	db, err := sqlite.New(projPath)
 	if err != nil {
-		log.Fatalf("[FATAL] Could not initialize database: %v", err)
+		log.Fatalf("[FATAL] Could not initialize database client: %v", err)
 	}
-	defer db.Close()
 
-	reqLogService := reqlog.NewService(db)
+	projService, err := proj.NewService(db)
+	if err != nil {
+		log.Fatalf("[FATAL] Could not create new project service: %v", err)
+	}
+	defer projService.Close()
 
-	p, err := proxy.NewProxy(caCert, tlsCA.PrivateKey)
+	scope := scope.New(db, projService)
+
+	reqLogService := reqlog.NewService(reqlog.Config{
+		Scope:          scope,
+		ProjectService: projService,
+		Repository:     db,
+	})
+
+	p, err := proxy.NewProxy(caCert, caKey)
 	if err != nil {
 		log.Fatalf("[FATAL] Could not create Proxy: %v", err)
 	}
@@ -87,6 +111,8 @@ func main() {
 	adminRouter.Path("/api/playground/").Handler(playground.Handler("GraphQL Playground", "/api/graphql/"))
 	adminRouter.Path("/api/graphql/").Handler(handler.NewDefaultServer(api.NewExecutableSchema(api.Config{Resolvers: &api.Resolver{
 		RequestLogService: reqLogService,
+		ProjectService:    projService,
+		ScopeService:      scope,
 	}})))
 
 	// Admin interface.

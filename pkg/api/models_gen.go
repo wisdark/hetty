@@ -9,13 +9,25 @@ import (
 	"time"
 )
 
+type ClearHTTPRequestLogResult struct {
+	Success bool `json:"success"`
+}
+
+type CloseProjectResult struct {
+	Success bool `json:"success"`
+}
+
+type DeleteProjectResult struct {
+	Success bool `json:"success"`
+}
+
 type HTTPHeader struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
 }
 
 type HTTPRequestLog struct {
-	ID        string           `json:"id"`
+	ID        int64            `json:"id"`
 	URL       string           `json:"url"`
 	Method    HTTPMethod       `json:"method"`
 	Proto     string           `json:"proto"`
@@ -25,13 +37,48 @@ type HTTPRequestLog struct {
 	Response  *HTTPResponseLog `json:"response"`
 }
 
+type HTTPRequestLogFilter struct {
+	OnlyInScope bool `json:"onlyInScope"`
+}
+
+type HTTPRequestLogFilterInput struct {
+	OnlyInScope *bool `json:"onlyInScope"`
+}
+
 type HTTPResponseLog struct {
-	RequestID  string       `json:"requestId"`
-	Proto      string       `json:"proto"`
-	Status     string       `json:"status"`
-	StatusCode int          `json:"statusCode"`
-	Body       *string      `json:"body"`
-	Headers    []HTTPHeader `json:"headers"`
+	RequestID    int64        `json:"requestId"`
+	Proto        string       `json:"proto"`
+	StatusCode   int          `json:"statusCode"`
+	StatusReason string       `json:"statusReason"`
+	Body         *string      `json:"body"`
+	Headers      []HTTPHeader `json:"headers"`
+}
+
+type Project struct {
+	Name     string `json:"name"`
+	IsActive bool   `json:"isActive"`
+}
+
+type ScopeHeader struct {
+	Key   *string `json:"key"`
+	Value *string `json:"value"`
+}
+
+type ScopeHeaderInput struct {
+	Key   *string `json:"key"`
+	Value *string `json:"value"`
+}
+
+type ScopeRule struct {
+	URL    *string      `json:"url"`
+	Header *ScopeHeader `json:"header"`
+	Body   *string      `json:"body"`
+}
+
+type ScopeRuleInput struct {
+	URL    *string           `json:"url"`
+	Header *ScopeHeaderInput `json:"header"`
+	Body   *string           `json:"body"`
 }
 
 type HTTPMethod string
