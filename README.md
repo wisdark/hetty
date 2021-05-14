@@ -44,14 +44,14 @@ and web based admin interface.
 
 #### Prerequisites
 
-- [Go](https://golang.org/)
+- [Go 1.16](https://golang.org/)
 - [Yarn](https://yarnpkg.com/)
-- [go.rice](https://github.com/GeertJohan/go.rice)
 
 Hetty depends on SQLite (via [mattn/go-sqlite3](https://github.com/mattn/go-sqlite3))
 and needs `cgo` to compile. Additionally, the static resources for the admin interface
-(Next.js) need to be generated via [Yarn](https://yarnpkg.com/) and embedded in
-a `.go` file with [go.rice](https://github.com/GeertJohan/go.rice) beforehand.
+(Next.js) need to be generated via [Yarn](https://yarnpkg.com/). The generated
+files will be embedded (using the [embed](https://golang.org/pkg/embed/) package)
+when you use the `build` Makefile target.
 
 Clone the repository and use the `build` make target to create a binary:
 
@@ -98,7 +98,7 @@ Usage of ./hetty:
   -adminPath string
         File path to admin build
   -cert string
-        CA certificate filepath. Creates a new CA certificate is file doesn't exist (default "~/.hetty/hetty_cert.pem")
+        CA certificate filepath. Creates a new CA certificate if file doesn't exist (default "~/.hetty/hetty_cert.pem")
   -key string
         CA private key filepath. Creates a new CA private key if file doesn't exist (default "~/.hetty/hetty_key.pem")
   -projects string
